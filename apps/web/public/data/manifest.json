@@ -51,6 +51,16 @@
       "feature_count": 8402
     },
     {
+      "key": "kolkata",
+      "label": "Kolkata",
+      "country": "IN",
+      "lat": 22.5726459,
+      "lon": 88.3638953,
+      "bearing": -15,
+      "ghi_annual": 1682.0,
+      "feature_count": 9835
+    },
+    {
       "key": "munich",
       "label": "Munich",
       "country": "",
