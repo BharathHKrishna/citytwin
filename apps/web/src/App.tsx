@@ -3,7 +3,7 @@ import { FlyToInterpolator } from '@deck.gl/core';
 import CityViewer from './components/CityViewer';
 import BuildingPanel from './components/BuildingPanel';
 import Legend from './components/Legend';
-import CitySearch from './components/CitySearch';
+import CitySearch, { SearchTarget } from './components/CitySearch';
 import MetricCards from './components/MetricCards';
 import Tooltip from './components/Tooltip';
 import { BuildingFeature, CityConfig, CityManifest, MetricKey } from './types';
@@ -103,15 +103,22 @@ export default function App() {
     loadCity(city);
   }, [activeCity, loadCity]);
 
-  // Called when user types a city not in the manifest and clicks "Fetch from OSM"
-  const searchCity = useCallback(async (query: string) => {
+  // Called when user selects a Nominatim suggestion — lat/lon already known
+  const searchCity = useCallback(async (target: SearchTarget) => {
     setLoading(true);
     setSelected(null);
     setHovered(null);
     setError(null);
 
-    const url = `/api/city?query=${encodeURIComponent(query)}&radius=1.5`;
-    const r = await fetch(url);
+    const params = new URLSearchParams({
+      query:   target.label,
+      lat:     String(target.lat),
+      lon:     String(target.lon),
+      label:   target.label,
+      country: target.country,
+      radius:  '1.5',
+    });
+    const r = await fetch(`/api/city?${params}`);
     if (!r.ok) {
       const body = await r.json().catch(() => ({ detail: r.statusText }));
       setLoading(false);

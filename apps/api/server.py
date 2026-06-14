@@ -9,10 +9,11 @@ Run:
 Then npm run dev in apps/web/ will proxy /api → :8000.
 """
 import json
+import re
 import shutil
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -38,21 +39,39 @@ app.add_middleware(
 
 @app.get("/api/city")
 async def get_city(
-    query: str  = Query(...,   description='Free-form city, e.g. "Kolkata, India"'),
-    radius: float = Query(1.5, description="Bounding-box radius in km (default 1.5)"),
-    force:  bool  = Query(False, description="Re-fetch even if already cached"),
+    query:   str           = Query(...,  description='City label or full query string'),
+    lat:     Optional[float] = Query(None, description="Pre-geocoded latitude (skips Nominatim)"),
+    lon:     Optional[float] = Query(None, description="Pre-geocoded longitude (skips Nominatim)"),
+    label:   Optional[str]   = Query(None, description="Display name when lat/lon are provided"),
+    country: Optional[str]   = Query(None, description="ISO country code e.g. IN"),
+    radius:  float           = Query(1.5,  description="Bounding-box radius in km"),
+    force:   bool            = Query(False, description="Re-fetch even if already cached"),
 ) -> Any:
     """
     Return GeoJSON FeatureCollection for any city on earth.
 
-    - First call: geocode → OSM fetch → GHI sample → compute metrics (~15-40 s)
+    When the frontend has already called Nominatim for autocomplete it passes
+    lat/lon/label/country directly — no second geocoding round-trip needed.
+
+    - First call: OSM fetch → GHI sample → compute metrics (~15-40 s)
     - Subsequent calls: served from disk cache instantly
-    - Result is also saved to apps/web/public/data/ so it persists across restarts
     """
-    try:
-        meta = geocode(query)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    # Build meta — either from pre-geocoded params or by calling Nominatim
+    if lat is not None and lon is not None and label:
+        key = re.sub(r"[^a-z0-9]", "_", label.lower().strip())
+        key = re.sub(r"_+", "_", key).strip("_")
+        meta = {
+            "key":     key,
+            "label":   label,
+            "lat":     lat,
+            "lon":     lon,
+            "country": (country or "").upper(),
+        }
+    else:
+        try:
+            meta = geocode(query)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
 
     cached = CITIES_DIR / f"{meta['key']}.json"
     if cached.exists() and not force:
@@ -75,8 +94,8 @@ async def get_city(
     update_manifest(CITIES_DIR)
 
     PUBLIC_DIR.mkdir(parents=True, exist_ok=True)
-    shutil.copy(cached,                         PUBLIC_DIR / cached.name)
-    shutil.copy(CITIES_DIR / "manifest.json",   PUBLIC_DIR / "manifest.json")
+    shutil.copy(cached,                        PUBLIC_DIR / cached.name)
+    shutil.copy(CITIES_DIR / "manifest.json",  PUBLIC_DIR / "manifest.json")
 
     return fc
 
