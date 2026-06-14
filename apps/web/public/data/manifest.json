@@ -1,9 +1,19 @@
 {
   "cities": [
     {
+      "key": "amritsar",
+      "label": "Amritsar",
+      "country": "IN",
+      "lat": 31.6356659,
+      "lon": 74.8787496,
+      "bearing": -15,
+      "ghi_annual": 1689.0,
+      "feature_count": 111
+    },
+    {
       "key": "amsterdam",
       "label": "Amsterdam",
-      "country": "NL",
+      "country": "",
       "lat": 52.3702,
       "lon": 4.8952,
       "bearing": 15,
@@ -13,7 +23,7 @@
     {
       "key": "bangalore",
       "label": "Bangalore",
-      "country": "IN",
+      "country": "",
       "lat": 12.9716,
       "lon": 77.5946,
       "bearing": -20,
@@ -23,7 +33,7 @@
     {
       "key": "berlin",
       "label": "Berlin",
-      "country": "DE",
+      "country": "",
       "lat": 52.52,
       "lon": 13.405,
       "bearing": 10,
@@ -33,7 +43,7 @@
     {
       "key": "karlsruhe",
       "label": "Karlsruhe",
-      "country": "DE",
+      "country": "",
       "lat": 49.0093,
       "lon": 8.4044,
       "bearing": -15,
@@ -43,12 +53,22 @@
     {
       "key": "munich",
       "label": "Munich",
-      "country": "DE",
+      "country": "",
       "lat": 48.1351,
       "lon": 11.582,
       "bearing": -5,
       "ghi_annual": 1185.0,
       "feature_count": 3216
+    },
+    {
+      "key": "mysore",
+      "label": "Mysuru",
+      "country": "IN",
+      "lat": 12.3051828,
+      "lon": 76.6553609,
+      "bearing": -15,
+      "ghi_annual": 1966.0,
+      "feature_count": 435
     }
   ],
   "updated": "2026-06-14"
