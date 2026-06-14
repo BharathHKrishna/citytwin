@@ -21,6 +21,21 @@ function cityViewState(city: CityConfig): ViewState {
   };
 }
 
+function cityConfigFromGeoJSON(fc: Record<string, unknown>): CityConfig {
+  const center = (fc.center ?? {}) as Record<string, number>;
+  const irr    = (fc.irradiance ?? {}) as Record<string, number>;
+  return {
+    key:           fc.city as string,
+    label:         fc.label as string,
+    country:       fc.country as string,
+    lat:           center.lat,
+    lon:           center.lon,
+    bearing:       center.bearing ?? -15,
+    ghi_annual:    irr.ghi_annual_kwh_m2 ?? 0,
+    feature_count: fc.feature_count as number,
+  };
+}
+
 export default function App() {
   const [cities,      setCities]      = useState<CityConfig[]>([]);
   const [activeCity,  setActiveCity]  = useState<CityConfig | null>(null);
@@ -35,7 +50,6 @@ export default function App() {
   const [hovered,     setHovered]     = useState<BuildingFeature | null>(null);
   const [pointer,     setPointer]     = useState({ x: 0, y: 0 });
 
-  // Load manifest — the source of truth for which cities exist
   useEffect(() => {
     fetch('/data/manifest.json')
       .then(r => r.json())
@@ -44,11 +58,24 @@ export default function App() {
         if (m.cities.length > 0) loadCity(m.cities[0]);
       })
       .catch(() => {
-        // Manifest missing — app still works, just show error in search
         setLoading(false);
         setError('No manifest.json found. Run: python data/prep_city.py --query "Your City"');
       });
   // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const applyGeoJSON = useCallback((fc: Record<string, unknown>, city: CityConfig) => {
+    setActiveCity(city);
+    setBuildings((fc.features as BuildingFeature[]) ?? []);
+    setGhiAnnual((fc.irradiance as Record<string, number>)?.ghi_annual_kwh_m2 ?? null);
+    setCount((fc.feature_count as number) ?? 0);
+    setViewState({
+      ...cityViewState(city),
+      transitionInterpolator: new FlyToInterpolator({ speed: 2.0 }),
+      transitionDuration: 'auto',
+    });
+    setLoading(false);
+    setError(null);
   }, []);
 
   const loadCity = useCallback((city: CityConfig) => {
@@ -60,32 +87,47 @@ export default function App() {
     fetch(`/data/${city.key}.json`)
       .then(r => {
         if (!r.ok) throw new Error(
-          `No data for "${city.label}". Run:\n  python data/prep_city.py --query "${city.label}"\n  cp data/cities/${city.key}.json apps/web/public/data/`
+          `No data for "${city.label}". Run:\n  python data/prep_city.py --query "${city.label}"`
         );
         return r.json();
       })
-      .then(data => {
-        setActiveCity(city);
-        setBuildings(data.features as BuildingFeature[]);
-        setGhiAnnual(data.irradiance?.ghi_annual_kwh_m2 ?? null);
-        setCount(data.feature_count ?? data.features.length);
-        setLoading(false);
-      })
+      .then((fc: Record<string, unknown>) => applyGeoJSON(fc, city))
       .catch(err => {
         setError(String(err.message));
         setLoading(false);
       });
-  }, []);
+  }, [applyGeoJSON]);
 
   const switchCity = useCallback((city: CityConfig) => {
     if (city.key === activeCity?.key) return;
-    setViewState({
-      ...cityViewState(city),
-      transitionInterpolator: new FlyToInterpolator({ speed: 2.0 }),
-      transitionDuration: 'auto',
-    });
     loadCity(city);
   }, [activeCity, loadCity]);
+
+  // Called when user types a city not in the manifest and clicks "Fetch from OSM"
+  const searchCity = useCallback(async (query: string) => {
+    setLoading(true);
+    setSelected(null);
+    setHovered(null);
+    setError(null);
+
+    const url = `/api/city?query=${encodeURIComponent(query)}&radius=1.5`;
+    const r = await fetch(url);
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({ detail: r.statusText }));
+      setLoading(false);
+      throw new Error(body.detail ?? `HTTP ${r.status}`);
+    }
+
+    const fc = await r.json() as Record<string, unknown>;
+    const city = cityConfigFromGeoJSON(fc);
+
+    setCities(prev => {
+      const exists = prev.some(c => c.key === city.key);
+      return exists ? prev.map(c => c.key === city.key ? city : c) : [...prev, city];
+    });
+
+    applyGeoJSON(fc, city);
+  }, [applyGeoJSON]);
 
   const handleHover = useCallback((b: BuildingFeature | null, x: number, y: number) => {
     setHovered(b);
@@ -103,13 +145,13 @@ export default function App() {
         onBuildingHover={handleHover}
       />
 
-      {/* Toolbar — city search + meta */}
       <div className="toolbar">
         <div className="toolbar-left">
           <CitySearch
             cities={cities}
             activeCity={activeCity}
             onSelect={switchCity}
+            onSearch={searchCity}
             loading={loading}
           />
           {activeCity && !loading && (
@@ -124,7 +166,6 @@ export default function App() {
         </div>
       </div>
 
-      {/* Metric cards */}
       <MetricCards
         activeMetric={metric}
         onSelect={m => { setMetric(m); setSelected(null); }}

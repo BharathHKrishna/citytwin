@@ -7,4 +7,9 @@ export default defineConfig({
     // deck.gl uses dynamic requires that confuse Vite's pre-bundler
     include: ['maplibre-gl'],
   },
+  server: {
+    proxy: {
+      '/api': 'http://localhost:8000',
+    },
+  },
 });
