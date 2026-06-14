@@ -11,6 +11,15 @@ import { BuildingFeature, CityConfig, CityManifest, MetricKey } from './types';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type ViewState = any;
 
+// Zoomed-out globe — default before any city is selected
+const EARTH_VIEW: ViewState = {
+  longitude: 20,
+  latitude:  20,
+  zoom:      2,
+  pitch:     0,
+  bearing:   0,
+};
+
 function cityViewState(city: CityConfig): ViewState {
   return {
     longitude: city.lon,
@@ -36,6 +45,15 @@ function cityConfigFromGeoJSON(fc: Record<string, unknown>): CityConfig {
   };
 }
 
+const HISTORY_KEY = 'citytwin_history';
+function saveToHistory(city: CityConfig) {
+  try {
+    const prev: CityConfig[] = JSON.parse(localStorage.getItem(HISTORY_KEY) ?? '[]');
+    const next = [city, ...prev.filter(c => c.key !== city.key)].slice(0, 10);
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
+  } catch { /* ignore */ }
+}
+
 export default function App() {
   const [cities,      setCities]      = useState<CityConfig[]>([]);
   const [activeCity,  setActiveCity]  = useState<CityConfig | null>(null);
@@ -44,24 +62,24 @@ export default function App() {
   const [count,       setCount]       = useState(0);
   const [loading,     setLoading]     = useState(true);
   const [error,       setError]       = useState<string | null>(null);
-  const [viewState,   setViewState]   = useState<ViewState>({ longitude: 8.4, latitude: 49.0, zoom: 4, pitch: 0, bearing: 0 });
+  const [viewState,   setViewState]   = useState<ViewState>(EARTH_VIEW);
   const [selected,    setSelected]    = useState<BuildingFeature | null>(null);
   const [metric,      setMetric]      = useState<MetricKey>('solar_potential');
   const [hovered,     setHovered]     = useState<BuildingFeature | null>(null);
   const [pointer,     setPointer]     = useState({ x: 0, y: 0 });
 
+  // Load manifest — just populates the city list, does NOT auto-fly anywhere
   useEffect(() => {
     fetch('/data/manifest.json')
       .then(r => r.json())
       .then((m: CityManifest) => {
         setCities(m.cities);
-        if (m.cities.length > 0) loadCity(m.cities[0]);
+        setLoading(false);
       })
       .catch(() => {
         setLoading(false);
         setError('No manifest.json found. Run: python data/prep_city.py --query "Your City"');
       });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const applyGeoJSON = useCallback((fc: Record<string, unknown>, city: CityConfig) => {
@@ -71,11 +89,12 @@ export default function App() {
     setCount((fc.feature_count as number) ?? 0);
     setViewState({
       ...cityViewState(city),
-      transitionInterpolator: new FlyToInterpolator({ speed: 2.0 }),
+      transitionInterpolator: new FlyToInterpolator({ speed: 1.8 }),
       transitionDuration: 'auto',
     });
     setLoading(false);
     setError(null);
+    saveToHistory(city);
   }, []);
 
   const loadCity = useCallback((city: CityConfig) => {
