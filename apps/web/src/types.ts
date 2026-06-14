@@ -3,10 +3,8 @@ export interface BuildingProperties {
   levels: number;
   footprint_area: number;
   volume: number;
-  // Normalised 0–1 for coloring
   solar_potential: number;
   heat_demand_proxy: number;
-  // Actual energy estimates from real GHI (Global Solar Atlas)
   solar_kwh_year: number;
   heat_kwh_year: number;
   building_type: string;
@@ -59,24 +57,19 @@ export const METRIC_CONFIG: Record<MetricKey, MetricConfig> = {
   },
 };
 
+// Loaded at runtime from /data/manifest.json — no hardcoded list
 export interface CityConfig {
   key: string;
   label: string;
   country: string;
-  view: {
-    longitude: number;
-    latitude: number;
-    zoom: number;
-    pitch: number;
-    bearing: number;
-  };
-  ghi_annual?: number;   // populated from GeoJSON metadata after load
+  lat: number;
+  lon: number;
+  bearing: number;
+  ghi_annual: number;
+  feature_count: number;
 }
 
-export const CITIES: Record<string, CityConfig> = {
-  karlsruhe: { key: 'karlsruhe', label: 'Karlsruhe', country: 'DE', view: { longitude: 8.4037,  latitude: 49.0069, zoom: 13.5, pitch: 60, bearing: -15 } },
-  bangalore:  { key: 'bangalore',  label: 'Bangalore',  country: 'IN', view: { longitude: 77.5946, latitude: 12.9716, zoom: 13.5, pitch: 60, bearing: -20 } },
-  berlin:     { key: 'berlin',     label: 'Berlin',     country: 'DE', view: { longitude: 13.4050, latitude: 52.5200, zoom: 13.5, pitch: 60, bearing:  10 } },
-  munich:     { key: 'munich',     label: 'Munich',     country: 'DE', view: { longitude: 11.5820, latitude: 48.1351, zoom: 13.5, pitch: 60, bearing:  -5 } },
-  amsterdam:  { key: 'amsterdam',  label: 'Amsterdam',  country: 'NL', view: { longitude:  4.8952, latitude: 52.3702, zoom: 13.5, pitch: 60, bearing:  15 } },
-};
+export interface CityManifest {
+  cities: CityConfig[];
+  updated: string;
+}

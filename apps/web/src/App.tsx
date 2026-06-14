@@ -3,54 +3,72 @@ import { FlyToInterpolator } from '@deck.gl/core';
 import CityViewer from './components/CityViewer';
 import BuildingPanel from './components/BuildingPanel';
 import Legend from './components/Legend';
-import CityPicker from './components/CityPicker';
+import CitySearch from './components/CitySearch';
 import MetricCards from './components/MetricCards';
 import Tooltip from './components/Tooltip';
-import { BuildingFeature, MetricKey, CITIES } from './types';
-
-const DEFAULT_CITY = 'karlsruhe';
+import { BuildingFeature, CityConfig, CityManifest, MetricKey } from './types';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type ViewState = any;
 
-interface CityMeta {
-  ghi_annual?: number;
-  count: number;
-}
-
-function cityView(key: string): ViewState {
-  return { ...CITIES[key].view };
+function cityViewState(city: CityConfig): ViewState {
+  return {
+    longitude: city.lon,
+    latitude:  city.lat,
+    zoom:      13.5,
+    pitch:     60,
+    bearing:   city.bearing ?? -15,
+  };
 }
 
 export default function App() {
-  const [activeCityKey, setActiveCityKey]   = useState(DEFAULT_CITY);
-  const [buildings, setBuildings]           = useState<BuildingFeature[]>([]);
-  const [meta, setMeta]                     = useState<CityMeta>({ count: 0 });
-  const [loading, setLoading]               = useState(true);
-  const [error, setError]                   = useState<string | null>(null);
-  const [viewState, setViewState]           = useState<ViewState>(cityView(DEFAULT_CITY));
-  const [selected, setSelected]             = useState<BuildingFeature | null>(null);
-  const [metric, setMetric]                 = useState<MetricKey>('solar_potential');
-  const [hovered, setHovered]               = useState<BuildingFeature | null>(null);
-  const [pointer, setPointer]               = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [cities,      setCities]      = useState<CityConfig[]>([]);
+  const [activeCity,  setActiveCity]  = useState<CityConfig | null>(null);
+  const [buildings,   setBuildings]   = useState<BuildingFeature[]>([]);
+  const [ghiAnnual,   setGhiAnnual]   = useState<number | null>(null);
+  const [count,       setCount]       = useState(0);
+  const [loading,     setLoading]     = useState(true);
+  const [error,       setError]       = useState<string | null>(null);
+  const [viewState,   setViewState]   = useState<ViewState>({ longitude: 8.4, latitude: 49.0, zoom: 4, pitch: 0, bearing: 0 });
+  const [selected,    setSelected]    = useState<BuildingFeature | null>(null);
+  const [metric,      setMetric]      = useState<MetricKey>('solar_potential');
+  const [hovered,     setHovered]     = useState<BuildingFeature | null>(null);
+  const [pointer,     setPointer]     = useState({ x: 0, y: 0 });
 
-  const loadCity = useCallback((cityKey: string) => {
+  // Load manifest — the source of truth for which cities exist
+  useEffect(() => {
+    fetch('/data/manifest.json')
+      .then(r => r.json())
+      .then((m: CityManifest) => {
+        setCities(m.cities);
+        if (m.cities.length > 0) loadCity(m.cities[0]);
+      })
+      .catch(() => {
+        // Manifest missing — app still works, just show error in search
+        setLoading(false);
+        setError('No manifest.json found. Run: python data/prep_city.py --query "Your City"');
+      });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const loadCity = useCallback((city: CityConfig) => {
     setLoading(true);
     setSelected(null);
     setHovered(null);
     setError(null);
 
-    fetch(`/data/${cityKey}.json`)
+    fetch(`/data/${city.key}.json`)
       .then(r => {
-        if (!r.ok) throw new Error(`HTTP ${r.status} — run: python generate_mock.py --all`);
+        if (!r.ok) throw new Error(
+          `No data for "${city.label}". Run:\n  python data/prep_city.py --query "${city.label}"\n  cp data/cities/${city.key}.json apps/web/public/data/`
+        );
         return r.json();
       })
       .then(data => {
+        setActiveCity(city);
         setBuildings(data.features as BuildingFeature[]);
-        setMeta({
-          ghi_annual: data.irradiance?.ghi_annual_kwh_m2,
-          count: data.feature_count ?? data.features.length,
-        });
+        setGhiAnnual(data.irradiance?.ghi_annual_kwh_m2 ?? null);
+        setCount(data.feature_count ?? data.features.length);
         setLoading(false);
       })
       .catch(err => {
@@ -59,43 +77,23 @@ export default function App() {
       });
   }, []);
 
-  useEffect(() => { loadCity(DEFAULT_CITY); }, [loadCity]);
-
-  const switchCity = useCallback((cityKey: string) => {
-    if (cityKey === activeCityKey) return;
-    setActiveCityKey(cityKey);
+  const switchCity = useCallback((city: CityConfig) => {
+    if (city.key === activeCity?.key) return;
     setViewState({
-      ...CITIES[cityKey].view,
+      ...cityViewState(city),
       transitionInterpolator: new FlyToInterpolator({ speed: 2.0 }),
       transitionDuration: 'auto',
     });
-    loadCity(cityKey);
-  }, [activeCityKey, loadCity]);
+    loadCity(city);
+  }, [activeCity, loadCity]);
 
   const handleHover = useCallback((b: BuildingFeature | null, x: number, y: number) => {
     setHovered(b);
     if (b) setPointer({ x, y });
   }, []);
 
-  if (error) {
-    return (
-      <div className="error-screen">
-        <div className="error-title">Failed to load city data</div>
-        <div className="error-msg">{error}</div>
-        <pre className="error-cmd">
-          cd data{'\n'}
-          python generate_mock.py --all{'\n'}
-          cp cities/*.json ../apps/web/public/data/
-        </pre>
-      </div>
-    );
-  }
-
-  const city = CITIES[activeCityKey];
-
   return (
     <div className="app">
-      {/* Full-viewport 3D scene */}
       <CityViewer
         buildings={buildings}
         activeMetric={metric}
@@ -105,54 +103,40 @@ export default function App() {
         onBuildingHover={handleHover}
       />
 
-      {/* Top-left toolbar */}
+      {/* Toolbar — city search + meta */}
       <div className="toolbar">
         <div className="toolbar-left">
-          <span className="city-name">
-            {city.label}
-            {loading && <span className="loading-dot" />}
-          </span>
-          {!loading && (
+          <CitySearch
+            cities={cities}
+            activeCity={activeCity}
+            onSelect={switchCity}
+            loading={loading}
+          />
+          {activeCity && !loading && (
             <div className="toolbar-meta">
-              {meta.count.toLocaleString()} buildings
-              {meta.ghi_annual && (
-                <span className="ghi-badge">
-                  ☀ {meta.ghi_annual.toLocaleString()} kWh/m²/yr
-                </span>
+              {count.toLocaleString()} buildings
+              {ghiAnnual && (
+                <span className="ghi-badge">☀ {ghiAnnual.toLocaleString()} kWh/m²/yr</span>
               )}
             </div>
           )}
+          {error && <div className="toolbar-error">{error.split('\n')[0]}</div>}
         </div>
       </div>
 
-      {/* Metric selector cards — top right */}
+      {/* Metric cards */}
       <MetricCards
         activeMetric={metric}
         onSelect={m => { setMetric(m); setSelected(null); }}
         buildings={buildings}
       />
 
-      {/* City switcher — bottom centre */}
-      <CityPicker
-        activeCityKey={activeCityKey}
-        onSelect={switchCity}
-        loading={loading}
-      />
-
-      {/* Colour legend — bottom left */}
       <Legend activeMetric={metric} />
 
-      {/* Hover tooltip — follows cursor */}
       {hovered && !selected && (
-        <Tooltip
-          building={hovered}
-          x={pointer.x}
-          y={pointer.y}
-          activeMetric={metric}
-        />
+        <Tooltip building={hovered} x={pointer.x} y={pointer.y} activeMetric={metric} />
       )}
 
-      {/* Click-to-inspect panel */}
       {selected && (
         <BuildingPanel building={selected} onClose={() => setSelected(null)} />
       )}

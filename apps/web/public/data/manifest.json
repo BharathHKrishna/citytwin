@@ -1,0 +1,55 @@
+{
+  "cities": [
+    {
+      "key": "amsterdam",
+      "label": "Amsterdam",
+      "country": "NL",
+      "lat": 52.3702,
+      "lon": 4.8952,
+      "bearing": 15,
+      "ghi_annual": 1050.0,
+      "feature_count": 3981
+    },
+    {
+      "key": "bangalore",
+      "label": "Bangalore",
+      "country": "IN",
+      "lat": 12.9716,
+      "lon": 77.5946,
+      "bearing": -20,
+      "ghi_annual": 1930.0,
+      "feature_count": 8745
+    },
+    {
+      "key": "berlin",
+      "label": "Berlin",
+      "country": "DE",
+      "lat": 52.52,
+      "lon": 13.405,
+      "bearing": 10,
+      "ghi_annual": 1069.0,
+      "feature_count": 5278
+    },
+    {
+      "key": "karlsruhe",
+      "label": "Karlsruhe",
+      "country": "DE",
+      "lat": 49.0093,
+      "lon": 8.4044,
+      "bearing": -15,
+      "ghi_annual": 1184.0,
+      "feature_count": 8402
+    },
+    {
+      "key": "munich",
+      "label": "Munich",
+      "country": "DE",
+      "lat": 48.1351,
+      "lon": 11.582,
+      "bearing": -5,
+      "ghi_annual": 1185.0,
+      "feature_count": 3216
+    }
+  ],
+  "updated": "2026-06-14"
+}
