@@ -2,7 +2,7 @@
 
 > Explore real cities in 3D, colored by energy metrics — rooftop solar potential, heat demand, building height.
 
-**[→ Live Demo](https://citytwin.vercel.app)** · 5 cities · Real solar irradiance from Global Solar Atlas · No account needed
+**[→ Live Demo](https://citytwin-pink.vercel.app)** · 5 cities · Real solar irradiance from Global Solar Atlas · No account needed
 
 ![CityTwin demo](docs/demo.gif)
 

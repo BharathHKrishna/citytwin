@@ -1,7 +1,6 @@
 {
-  "framework": "vite",
-  "rootDirectory": "apps/web",
-  "buildCommand": "npm run build",
-  "outputDirectory": "dist",
-  "installCommand": "npm install"
+  "buildCommand": "cd apps/web && npm install && npm run build",
+  "outputDirectory": "apps/web/dist",
+  "installCommand": "echo skip",
+  "framework": null
 }
