@@ -1,0 +1,23 @@
+# Node
+node_modules/
+dist/
+.vite/
+
+# Data — generated output (large, reproducible)
+# NOTE: apps/web/public/data/*.json IS committed (Vercel needs it)
+data/cities/
+
+# Environment
+.env
+.env.local
+*.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.ipynb_checkpoints/
