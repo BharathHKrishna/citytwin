@@ -21,53 +21,91 @@ export interface SearchTarget {
   lon:     number;
 }
 
-interface NominatimHit {
-  place_id:     number;
-  display_name: string;
-  lat:          string;
-  lon:          string;
-  class:        string;
-  type:         string;
-  importance:   number;   // 0–1, higher = more prominent (Hamburg ~0.85, tiny village ~0.1)
-  address: {
-    city?:         string;
-    town?:         string;
-    village?:      string;
-    municipality?: string;
-    county?:       string;
-    state?:        string;
-    country?:      string;
-    country_code?: string;
-  };
+interface Suggestion {
+  id:      string;
+  name:    string;
+  context: string;   // "State, Country"
+  cc:      string;   // ISO country code
+  lat:     number;
+  lon:     number;
 }
 
-function hitPrimaryName(h: NominatimHit): string {
-  // display_name first component is the place's own name, not the parent admin area.
-  // e.g. "Hamburg, Germany" → "Hamburg", "Hambu-ri, Chagang, North Korea" → "Hambu-ri"
-  return h.display_name.split(',')[0].trim();
-}
+// Photon (komoot.io) — purpose-built autocomplete on OSM data.
+// Handles partial cross-word queries: "san fra" → San Francisco, "hambur" → Hamburg.
+// Falls back to Nominatim importance-ranked search if Photon is unreachable.
+async function fetchSuggestions(q: string): Promise<Suggestion[]> {
+  // ── Primary: Photon ────────────────────────────────────────────────────────
+  try {
+    const r = await fetch(
+      `https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=7&lang=en&layer=city,district,county`,
+      { signal: AbortSignal.timeout(5000) },
+    );
+    const data = await r.json() as { features: unknown[] };
+    interface PF { geometry: { coordinates: [number, number] }; properties: Record<string, string> }
+    const features = data.features as PF[];
+    if (features.length > 0) {
+      return features.map((f, i) => {
+        const p  = f.properties;
+        const ctx = [p.state, p.country].filter(Boolean).join(', ');
+        return {
+          id:      String(p.osm_id ?? i),
+          name:    p.name ?? '',
+          context: ctx,
+          cc:      (p.countrycode ?? '').toUpperCase(),
+          lat:     f.geometry.coordinates[1],
+          lon:     f.geometry.coordinates[0],
+        };
+      }).filter(s => s.name.toLowerCase().includes(q.trim().toLowerCase().split(/\s+/)[0]));
+    }
+  } catch { /* Photon unreachable — fall through to Nominatim */ }
 
-function hitContext(h: NominatimHit): string {
-  return [h.address.state, h.address.country].filter(Boolean).join(', ');
-}
-
-function hitFlag(h: NominatimHit): string {
-  return FLAG[(h.address.country_code ?? '').toUpperCase()] ?? '🌍';
+  // ── Fallback: Nominatim with importance sort ───────────────────────────────
+  interface NH {
+    place_id: number; display_name: string; lat: string; lon: string;
+    class: string; type: string; importance: number;
+    address: Record<string, string>;
+  }
+  const r2 = await fetch(
+    `https://nominatim.openstreetmap.org/search` +
+    `?q=${encodeURIComponent(q)}&format=json&limit=15&addressdetails=1`,
+    { headers: { 'Accept-Language': 'en' }, signal: AbortSignal.timeout(6000) },
+  );
+  const hits: NH[] = await r2.json();
+  const lower = q.trim().toLowerCase();
+  return hits
+    .filter(h => {
+      if (h.class !== 'place' && !(h.class === 'boundary' && h.type === 'administrative')) return false;
+      return h.display_name.split(',')[0].trim().toLowerCase().includes(lower);
+    })
+    .sort((a, b) => (b.importance ?? 0) - (a.importance ?? 0))
+    .slice(0, 6)
+    .map(h => {
+      const a = h.address;
+      return {
+        id:      String(h.place_id),
+        name:    h.display_name.split(',')[0].trim(),
+        context: [a.state, a.country].filter(Boolean).join(', '),
+        cc:      (a.country_code ?? '').toUpperCase(),
+        lat:     parseFloat(h.lat),
+        lon:     parseFloat(h.lon),
+      };
+    });
 }
 
 interface Props {
-  cities:     CityConfig[];
-  activeCity: CityConfig | null;
-  onSelect:   (city: CityConfig) => void;
-  onSearch:   (target: SearchTarget) => Promise<void>;
-  loading:    boolean;
+  cities:        CityConfig[];
+  activeCity:    CityConfig | null;
+  onSelect:      (city: CityConfig) => void;
+  onSearch:      (target: SearchTarget) => Promise<void>;
+  onClearError:  () => void;
+  loading:       boolean;
 }
 
-export default function CitySearch({ cities, activeCity, onSelect, onSearch, loading }: Props) {
+export default function CitySearch({ cities, activeCity, onSelect, onSearch, onClearError, loading }: Props) {
   const [query,       setQuery]       = useState('');
   const [open,        setOpen]        = useState(false);
-  const [suggestions, setSuggestions] = useState<NominatimHit[]>([]);
-  const [nomLoading,  setNomLoading]  = useState(false);
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [fetching,    setFetching]    = useState(false);
   const [searching,   setSearching]   = useState(false);
   const [searchErr,   setSearchErr]   = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -83,48 +121,21 @@ export default function CitySearch({ cities, activeCity, onSelect, onSearch, loa
         c.key.toLowerCase().includes(lower),
       );
 
-  // Nominatim autocomplete, debounced 400ms.
-  // Key filter: h.name (OSM canonical name) must start with or contain the query.
-  // This blocks false positives: "Mora" appearing for "stutt" happens because
-  // Mora has a "Stuttgarterstraße", but Mora's OSM name is "Mora" ≠ "stutt".
-  // Hamburg, Stuttgart, Kolkata etc. all pass because their OSM names match.
   useEffect(() => {
     if (trimmed.length < 2) { setSuggestions([]); return; }
     clearTimeout(debounce.current);
     debounce.current = setTimeout(async () => {
-      setNomLoading(true);
+      setFetching(true);
       try {
-        const r = await fetch(
-          `https://nominatim.openstreetmap.org/search` +
-          `?q=${encodeURIComponent(trimmed)}&format=json&limit=15&addressdetails=1`,
-          { headers: { 'Accept-Language': 'en' } },
-        );
-        const data: NominatimHit[] = await r.json();
-
-        const hits = data
-          .filter(h => {
-            // Only settlements and admin boundaries — skip roads, POIs, etc.
-            if (h.class !== 'place' && !(h.class === 'boundary' && h.type === 'administrative')) {
-              return false;
-            }
-            // The place's own name must contain the typed string.
-            const name = hitPrimaryName(h).toLowerCase();
-            return name.includes(lower);
-          })
-          // Sort by Nominatim importance score (0-1).
-          // This puts Hamburg (0.85) above "Hambu-ri, North Korea" (0.10)
-          // even when Nominatim's raw ranking prefers the shorter prefix match.
-          .sort((a, b) => (b.importance ?? 0) - (a.importance ?? 0));
-
-        setSuggestions(hits.slice(0, 6));
+        setSuggestions(await fetchSuggestions(trimmed));
       } catch {
         setSuggestions([]);
       } finally {
-        setNomLoading(false);
+        setFetching(false);
       }
-    }, 400);
+    }, 350);
     return () => clearTimeout(debounce.current);
-  }, [trimmed, lower]);
+  }, [trimmed]);
 
   function selectKnown(city: CityConfig) {
     onSelect(city);
@@ -135,13 +146,8 @@ export default function CitySearch({ cities, activeCity, onSelect, onSearch, loa
     inputRef.current?.blur();
   }
 
-  async function selectSuggestion(hit: NominatimHit) {
-    const target: SearchTarget = {
-      label:   hitPrimaryName(hit),
-      country: (hit.address.country_code ?? '').toUpperCase(),
-      lat:     parseFloat(hit.lat),
-      lon:     parseFloat(hit.lon),
-    };
+  async function selectSuggestion(s: Suggestion) {
+    const target: SearchTarget = { label: s.name, country: s.cc, lat: s.lat, lon: s.lon };
     setQuery('');
     setOpen(false);
     setSuggestions([]);
@@ -154,7 +160,7 @@ export default function CitySearch({ cities, activeCity, onSelect, onSearch, loa
       const msg = e instanceof Error ? e.message : String(e);
       setSearchErr(
         msg.includes('Failed to fetch') || msg.includes('404')
-          ? 'Live fetch needs the local API — run: cd apps/api && uvicorn server:app --port 8000'
+          ? 'Need local API: cd apps/api && uvicorn server:app --port 8000'
           : msg,
       );
     } finally {
@@ -164,10 +170,7 @@ export default function CitySearch({ cities, activeCity, onSelect, onSearch, loa
 
   function handleKeyDown(e: React.KeyboardEvent) {
     if (e.key === 'Escape') {
-      setOpen(false);
-      setQuery('');
-      setSuggestions([]);
-      inputRef.current?.blur();
+      setOpen(false); setQuery(''); setSuggestions([]); inputRef.current?.blur();
     }
   }
 
@@ -185,7 +188,12 @@ export default function CitySearch({ cities, activeCity, onSelect, onSearch, loa
           type="text"
           placeholder={activeCity ? activeCity.label : 'Search any city…'}
           value={query}
-          onChange={e => { setQuery(e.target.value); setOpen(true); setSearchErr(null); }}
+          onChange={e => {
+            setQuery(e.target.value);
+            setOpen(true);
+            setSearchErr(null);
+            onClearError();   // clear any toolbar error when user types
+          }}
           onFocus={() => setOpen(true)}
           onBlur={() => setTimeout(() => setOpen(false), 200)}
           onKeyDown={handleKeyDown}
@@ -193,21 +201,18 @@ export default function CitySearch({ cities, activeCity, onSelect, onSearch, loa
           spellCheck={false}
           autoComplete="off"
         />
-        {(busy || nomLoading) && <span className="loading-dot" />}
+        {(busy || fetching) && <span className="loading-dot" />}
       </div>
 
       {open && hasAny && (
         <div className="city-search-dropdown">
-
           {knownMatches.length > 0 && (
             <>
               <div className="city-search-section">Already fetched</div>
               {knownMatches.map(city => (
-                <button
-                  key={city.key}
+                <button key={city.key}
                   className={`city-search-item${city.key === activeCity?.key ? ' city-search-item--active' : ''}`}
-                  onMouseDown={() => selectKnown(city)}
-                >
+                  onMouseDown={() => selectKnown(city)}>
                   <span className="city-search-flag">{FLAG[city.country?.toUpperCase()] ?? '🌍'}</span>
                   <span className="city-search-label">{city.label}</span>
                   {city.ghi_annual > 0 && (
@@ -223,16 +228,14 @@ export default function CitySearch({ cities, activeCity, onSelect, onSearch, loa
               <div className="city-search-section">
                 {knownMatches.length > 0 ? 'Or fetch a new city' : 'Select the right one'}
               </div>
-              {suggestions.map(hit => (
-                <button
-                  key={hit.place_id}
+              {suggestions.map(s => (
+                <button key={s.id}
                   className="city-search-item city-search-item--nom"
-                  onMouseDown={() => selectSuggestion(hit)}
-                >
-                  <span className="city-search-flag">{hitFlag(hit)}</span>
+                  onMouseDown={() => selectSuggestion(s)}>
+                  <span className="city-search-flag">{FLAG[s.cc] ?? '🌍'}</span>
                   <span className="city-search-label-wrap">
-                    <span className="city-search-label">{hitPrimaryName(hit)}</span>
-                    <span className="city-search-context">{hitContext(hit)}</span>
+                    <span className="city-search-label">{s.name}</span>
+                    {s.context && <span className="city-search-context">{s.context}</span>}
                   </span>
                   <span className="city-search-ghi">~20 s</span>
                 </button>
@@ -242,11 +245,9 @@ export default function CitySearch({ cities, activeCity, onSelect, onSearch, loa
 
           {searchErr && (
             <div className="city-search-err">
-              <span>⚠</span>
-              <span>{searchErr}</span>
+              <span>⚠</span><span>{searchErr}</span>
             </div>
           )}
-
         </div>
       )}
     </div>

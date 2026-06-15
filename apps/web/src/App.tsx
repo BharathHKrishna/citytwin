@@ -168,6 +168,7 @@ export default function App() {
             activeCity={activeCity}
             onSelect={switchCity}
             onSearch={searchCity}
+            onClearError={() => setError(null)}
             loading={loading}
           />
           {activeCity && !loading && (

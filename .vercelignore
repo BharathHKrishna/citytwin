@@ -1,4 +1,4 @@
 # Exclude heavy local Python pipeline — not needed on Vercel.
 # The Vercel function is api/city.py which only needs 'requests'.
-data/
-apps/api/
+/data/
+/apps/api/
