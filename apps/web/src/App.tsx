@@ -6,12 +6,12 @@ import Legend from './components/Legend';
 import CitySearch, { SearchTarget } from './components/CitySearch';
 import MetricCards from './components/MetricCards';
 import Tooltip from './components/Tooltip';
+import HistoryStrip, { saveToHistory } from './components/HistoryStrip';
 import { BuildingFeature, CityConfig, CityManifest, MetricKey } from './types';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type ViewState = any;
 
-// Zoomed-out globe — default before any city is selected
 const EARTH_VIEW: ViewState = {
   longitude: 20,
   latitude:  20,
@@ -45,30 +45,21 @@ function cityConfigFromGeoJSON(fc: Record<string, unknown>): CityConfig {
   };
 }
 
-const HISTORY_KEY = 'citytwin_history';
-function saveToHistory(city: CityConfig) {
-  try {
-    const prev: CityConfig[] = JSON.parse(localStorage.getItem(HISTORY_KEY) ?? '[]');
-    const next = [city, ...prev.filter(c => c.key !== city.key)].slice(0, 10);
-    localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
-  } catch { /* ignore */ }
-}
-
 export default function App() {
-  const [cities,      setCities]      = useState<CityConfig[]>([]);
-  const [activeCity,  setActiveCity]  = useState<CityConfig | null>(null);
-  const [buildings,   setBuildings]   = useState<BuildingFeature[]>([]);
-  const [ghiAnnual,   setGhiAnnual]   = useState<number | null>(null);
-  const [count,       setCount]       = useState(0);
-  const [loading,     setLoading]     = useState(true);
-  const [error,       setError]       = useState<string | null>(null);
-  const [viewState,   setViewState]   = useState<ViewState>(EARTH_VIEW);
-  const [selected,    setSelected]    = useState<BuildingFeature | null>(null);
-  const [metric,      setMetric]      = useState<MetricKey>('solar_potential');
-  const [hovered,     setHovered]     = useState<BuildingFeature | null>(null);
-  const [pointer,     setPointer]     = useState({ x: 0, y: 0 });
+  const [cities,     setCities]     = useState<CityConfig[]>([]);
+  const [activeCity, setActiveCity] = useState<CityConfig | null>(null);
+  const [buildings,  setBuildings]  = useState<BuildingFeature[]>([]);
+  const [ghiAnnual,  setGhiAnnual]  = useState<number | null>(null);
+  const [count,      setCount]      = useState(0);
+  const [loading,    setLoading]    = useState(true);
+  const [error,      setError]      = useState<string | null>(null);
+  const [viewState,  setViewState]  = useState<ViewState>(EARTH_VIEW);
+  const [selected,   setSelected]   = useState<BuildingFeature | null>(null);
+  const [metric,     setMetric]     = useState<MetricKey>('solar_potential');
+  const [hovered,    setHovered]    = useState<BuildingFeature | null>(null);
+  const [pointer,    setPointer]    = useState({ x: 0, y: 0 });
 
-  // Load manifest — just populates the city list, does NOT auto-fly anywhere
+  // Load manifest — populates city list, does NOT auto-fly anywhere
   useEffect(() => {
     fetch('/data/manifest.json')
       .then(r => r.json())
@@ -78,7 +69,7 @@ export default function App() {
       })
       .catch(() => {
         setLoading(false);
-        setError('No manifest.json found. Run: python data/prep_city.py --query "Your City"');
+        setError('manifest.json not found');
       });
   }, []);
 
@@ -105,9 +96,7 @@ export default function App() {
 
     fetch(`/data/${city.key}.json`)
       .then(r => {
-        if (!r.ok) throw new Error(
-          `No data for "${city.label}". Run:\n  python data/prep_city.py --query "${city.label}"`
-        );
+        if (!r.ok) throw new Error(`No data for "${city.label}"`);
         return r.json();
       })
       .then((fc: Record<string, unknown>) => applyGeoJSON(fc, city))
@@ -117,12 +106,12 @@ export default function App() {
       });
   }, [applyGeoJSON]);
 
+  // Always navigate — even if clicking the same city again (re-flies to it)
   const switchCity = useCallback((city: CityConfig) => {
-    if (city.key === activeCity?.key) return;
     loadCity(city);
-  }, [activeCity, loadCity]);
+  }, [loadCity]);
 
-  // Called when user selects a Nominatim suggestion — lat/lon already known
+  // Called when user picks a Photon suggestion — lat/lon already known
   const searchCity = useCallback(async (target: SearchTarget) => {
     setLoading(true);
     setSelected(null);
@@ -171,6 +160,7 @@ export default function App() {
         onBuildingHover={handleHover}
       />
 
+      {/* Toolbar */}
       <div className="toolbar">
         <div className="toolbar-left">
           <CitySearch
@@ -188,9 +178,12 @@ export default function App() {
               )}
             </div>
           )}
-          {error && <div className="toolbar-error">{error.split('\n')[0]}</div>}
+          {error && <div className="toolbar-error">{error}</div>}
         </div>
       </div>
+
+      {/* History strip — always visible, separate from search dropdown */}
+      <HistoryStrip activeCity={activeCity} onSelect={switchCity} />
 
       <MetricCards
         activeMetric={metric}

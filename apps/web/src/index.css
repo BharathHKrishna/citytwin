@@ -446,6 +446,85 @@ body {
   text-overflow: ellipsis;
 }
 
+/* ── History strip ────────────────────────────────── */
+.history-strip {
+  position: absolute;
+  top: 72px;
+  left: 16px;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 6px 12px;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  max-width: calc(100vw - 220px);
+  overflow-x: auto;
+}
+
+.history-label {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-dim);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.history-chips {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.history-chip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 9px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 20px;
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+
+.history-chip:hover {
+  background: rgba(255,255,255,0.10);
+  color: var(--text);
+  border-color: rgba(255,255,255,0.18);
+}
+
+.history-chip--active {
+  background: rgba(65, 176, 248, 0.12);
+  border-color: rgba(65, 176, 248, 0.35);
+  color: var(--accent);
+}
+
+.history-chip-flag {
+  font-size: 13px;
+  line-height: 1;
+}
+
+/* Search error message inside dropdown */
+.city-search-err {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 14px;
+  font-size: 11px;
+  color: #e05252;
+  line-height: 1.4;
+}
+
 /* toolbar-error */
 .toolbar-error {
   font-size: 11px;

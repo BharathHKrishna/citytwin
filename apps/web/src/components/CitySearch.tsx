@@ -21,52 +21,20 @@ export interface SearchTarget {
   lon:     number;
 }
 
-interface NominatimHit {
-  place_id:     number;
-  display_name: string;
-  lat:          string;
-  lon:          string;
-  type:         string;
-  class:        string;
-  address: {
-    city?:         string;
-    town?:         string;
-    village?:      string;
-    municipality?: string;
-    county?:       string;
-    state?:        string;
-    country?:      string;
-    country_code?: string;
+// Photon (komoot) feature — purpose-built geocoder autocomplete on OSM data.
+// Handles prefix matching properly: "hambur" → Hamburg, "stutt" → Stuttgart.
+interface PhotonFeature {
+  type: 'Feature';
+  geometry: { type: 'Point'; coordinates: [number, number] }; // [lon, lat]
+  properties: {
+    osm_id:      number;
+    name:        string;
+    country:     string;
+    countrycode: string;
+    type:        string; // 'city', 'town', 'village', 'county', 'district'
+    state?:      string;
+    county?:     string;
   };
-}
-
-function hitLabel(h: NominatimHit): string {
-  const a = h.address;
-  return (
-    a.city ?? a.town ?? a.municipality ?? a.village ?? a.county ??
-    h.display_name.split(',')[0].trim()
-  );
-}
-
-function hitContext(h: NominatimHit): string {
-  const a = h.address;
-  return [a.state, a.country].filter(Boolean).join(', ');
-}
-
-function hitFlag(h: NominatimHit): string {
-  return FLAG[(h.address.country_code ?? '').toUpperCase()] ?? '🌍';
-}
-
-const HISTORY_KEY = 'citytwin_history';
-
-function loadHistory(): CityConfig[] {
-  try { return JSON.parse(localStorage.getItem(HISTORY_KEY) ?? '[]'); }
-  catch { return []; }
-}
-
-function saveToHistory(city: CityConfig) {
-  const prev = loadHistory().filter(c => c.key !== city.key);
-  localStorage.setItem(HISTORY_KEY, JSON.stringify([city, ...prev].slice(0, 10)));
 }
 
 interface Props {
@@ -80,11 +48,10 @@ interface Props {
 export default function CitySearch({ cities, activeCity, onSelect, onSearch, loading }: Props) {
   const [query,       setQuery]       = useState('');
   const [open,        setOpen]        = useState(false);
-  const [suggestions, setSuggestions] = useState<NominatimHit[]>([]);
+  const [suggestions, setSuggestions] = useState<PhotonFeature[]>([]);
   const [nomLoading,  setNomLoading]  = useState(false);
   const [searching,   setSearching]   = useState(false);
   const [searchErr,   setSearchErr]   = useState<string | null>(null);
-  const [history,     setHistory]     = useState<CityConfig[]>(loadHistory);
   const inputRef = useRef<HTMLInputElement>(null);
   const debounce = useRef<ReturnType<typeof setTimeout>>();
 
@@ -92,38 +59,27 @@ export default function CitySearch({ cities, activeCity, onSelect, onSearch, loa
   const lower   = trimmed.toLowerCase();
 
   const knownMatches = trimmed.length === 0
-    ? cities
+    ? []
     : cities.filter(c =>
         c.label.toLowerCase().includes(lower) ||
         c.key.toLowerCase().includes(lower),
       );
 
-  // Nominatim autocomplete — debounced, filtered so city name must match query
+  // Photon autocomplete — debounced 380ms.
+  // Uses layer=city,district,county for settlement-level results only.
+  // Photon does proper prefix matching so "hambur" → Hamburg, "stutt" → Stuttgart.
   useEffect(() => {
     if (trimmed.length < 2) { setSuggestions([]); return; }
     clearTimeout(debounce.current);
     debounce.current = setTimeout(async () => {
       setNomLoading(true);
       try {
-        const r = await fetch(
-          `https://nominatim.openstreetmap.org/search?` +
-          `q=${encodeURIComponent(trimmed)}&format=json&limit=10&addressdetails=1`,
-          { headers: { 'Accept-Language': 'en' } },
-        );
-        const data: NominatimHit[] = await r.json();
-
-        // Only keep settlement / admin results where the CITY NAME contains the query.
-        // This blocks results like "Mora" appearing for "stutt" (Mora just has a
-        // street named after Stuttgart — the city name itself doesn't match).
-        const hits = data.filter(h => {
-          if (h.class !== 'place' && !(h.class === 'boundary' && h.type === 'administrative')) {
-            return false;
-          }
-          const name = hitLabel(h).toLowerCase();
-          return name.includes(lower);
-        });
-
-        setSuggestions(hits.slice(0, 6));
+        const url =
+          `https://photon.komoot.io/api/?q=${encodeURIComponent(trimmed)}` +
+          `&limit=7&layer=city,district,county`;
+        const r = await fetch(url, { headers: { 'Accept-Language': 'en' } });
+        const data = await r.json() as { features: PhotonFeature[] };
+        setSuggestions(data.features ?? []);
       } catch {
         setSuggestions([]);
       } finally {
@@ -131,11 +87,9 @@ export default function CitySearch({ cities, activeCity, onSelect, onSearch, loa
       }
     }, 380);
     return () => clearTimeout(debounce.current);
-  }, [trimmed, lower]);
+  }, [trimmed]);
 
   function selectKnown(city: CityConfig) {
-    saveToHistory(city);
-    setHistory(loadHistory());
     onSelect(city);
     setQuery('');
     setOpen(false);
@@ -144,12 +98,13 @@ export default function CitySearch({ cities, activeCity, onSelect, onSearch, loa
     inputRef.current?.blur();
   }
 
-  async function selectSuggestion(hit: NominatimHit) {
+  async function selectSuggestion(f: PhotonFeature) {
+    const [lon, lat] = f.geometry.coordinates;
     const target: SearchTarget = {
-      label:   hitLabel(hit),
-      country: (hit.address.country_code ?? '').toUpperCase(),
-      lat:     parseFloat(hit.lat),
-      lon:     parseFloat(hit.lon),
+      label:   f.properties.name,
+      country: (f.properties.countrycode ?? '').toUpperCase(),
+      lat,
+      lon,
     };
     setQuery('');
     setOpen(false);
@@ -159,10 +114,14 @@ export default function CitySearch({ cities, activeCity, onSelect, onSearch, loa
     inputRef.current?.blur();
     try {
       await onSearch(target);
-      // History is updated in App after city loads successfully
-      setHistory(loadHistory());
     } catch (e: unknown) {
-      setSearchErr(e instanceof Error ? e.message : String(e));
+      const msg = e instanceof Error ? e.message : String(e);
+      // Distinguish "no local API" from other errors
+      setSearchErr(
+        msg.includes('Failed to fetch') || msg.includes('404')
+          ? `Live search needs the local API server — run: cd apps/api && uvicorn server:app --port 8000`
+          : msg,
+      );
     } finally {
       setSearching(false);
     }
@@ -177,18 +136,9 @@ export default function CitySearch({ cities, activeCity, onSelect, onSearch, loa
     }
   }
 
-  const busy     = loading || searching;
-  const showNom  = suggestions.length > 0 && !busy;
-  const recentCities = history.filter(h => h.key !== activeCity?.key);
-
-  // What to show when query is empty: recent history, then all known cities
-  const emptyKnown = trimmed.length === 0 ? cities.filter(c => c.key !== activeCity?.key) : [];
-
-  const hasContent =
-    knownMatches.length > 0 ||
-    showNom ||
-    searchErr ||
-    (trimmed.length === 0 && (recentCities.length > 0 || emptyKnown.length > 0));
+  const busy    = loading || searching;
+  const showNom = suggestions.length > 0 && !busy;
+  const hasAny  = knownMatches.length > 0 || showNom || !!searchErr;
 
   return (
     <div className="city-search">
@@ -201,7 +151,7 @@ export default function CitySearch({ cities, activeCity, onSelect, onSearch, loa
           placeholder={activeCity ? activeCity.label : 'Search any city…'}
           value={query}
           onChange={e => { setQuery(e.target.value); setOpen(true); setSearchErr(null); }}
-          onFocus={() => setOpen(true)}
+          onFocus={() => { if (trimmed.length >= 2) setOpen(true); }}
           onBlur={() => setTimeout(() => setOpen(false), 200)}
           onKeyDown={handleKeyDown}
           disabled={busy}
@@ -211,53 +161,11 @@ export default function CitySearch({ cities, activeCity, onSelect, onSearch, loa
         {(busy || nomLoading) && <span className="loading-dot" />}
       </div>
 
-      {open && hasContent && (
+      {open && hasAny && (
         <div className="city-search-dropdown">
 
-          {/* Empty query: show history + all cities */}
-          {trimmed.length === 0 && (
-            <>
-              {recentCities.length > 0 && (
-                <>
-                  <div className="city-search-section">Recent</div>
-                  {recentCities.map(city => (
-                    <button
-                      key={city.key}
-                      className="city-search-item"
-                      onMouseDown={() => selectKnown(city)}
-                    >
-                      <span className="city-search-flag">{FLAG[city.country] ?? '🌍'}</span>
-                      <span className="city-search-label">{city.label}</span>
-                      {city.ghi_annual > 0 && (
-                        <span className="city-search-ghi">☀ {city.ghi_annual.toLocaleString()} kWh/m²/yr</span>
-                      )}
-                    </button>
-                  ))}
-                </>
-              )}
-              {emptyKnown.length > 0 && (
-                <>
-                  <div className="city-search-section">All cities</div>
-                  {emptyKnown.map(city => (
-                    <button
-                      key={city.key}
-                      className={`city-search-item${city.key === activeCity?.key ? ' city-search-item--active' : ''}`}
-                      onMouseDown={() => selectKnown(city)}
-                    >
-                      <span className="city-search-flag">{FLAG[city.country] ?? '🌍'}</span>
-                      <span className="city-search-label">{city.label}</span>
-                      {city.ghi_annual > 0 && (
-                        <span className="city-search-ghi">☀ {city.ghi_annual.toLocaleString()} kWh/m²/yr</span>
-                      )}
-                    </button>
-                  ))}
-                </>
-              )}
-            </>
-          )}
-
-          {/* Non-empty query: matching known cities */}
-          {trimmed.length > 0 && knownMatches.length > 0 && (
+          {/* Already-fetched cities that match the query */}
+          {knownMatches.length > 0 && (
             <>
               <div className="city-search-section">Already fetched</div>
               {knownMatches.map(city => (
@@ -276,33 +184,37 @@ export default function CitySearch({ cities, activeCity, onSelect, onSearch, loa
             </>
           )}
 
-          {/* Nominatim suggestions */}
+          {/* Photon live suggestions */}
           {showNom && (
             <>
               <div className="city-search-section">
-                {knownMatches.length > 0 ? 'More cities' : 'Select the right one'}
+                {knownMatches.length > 0 ? 'Or fetch a new city' : 'Select the right one'}
               </div>
-              {suggestions.map(hit => (
-                <button
-                  key={hit.place_id}
-                  className="city-search-item city-search-item--nom"
-                  onMouseDown={() => selectSuggestion(hit)}
-                >
-                  <span className="city-search-flag">{hitFlag(hit)}</span>
-                  <span className="city-search-label-wrap">
-                    <span className="city-search-label">{hitLabel(hit)}</span>
-                    <span className="city-search-context">{hitContext(hit)}</span>
-                  </span>
-                  <span className="city-search-ghi">~20 s</span>
-                </button>
-              ))}
+              {suggestions.map(f => {
+                const cc = (f.properties.countrycode ?? '').toUpperCase();
+                const ctx = [f.properties.state, f.properties.country].filter(Boolean).join(', ');
+                return (
+                  <button
+                    key={f.properties.osm_id}
+                    className="city-search-item city-search-item--nom"
+                    onMouseDown={() => selectSuggestion(f)}
+                  >
+                    <span className="city-search-flag">{FLAG[cc] ?? '🌍'}</span>
+                    <span className="city-search-label-wrap">
+                      <span className="city-search-label">{f.properties.name}</span>
+                      {ctx && <span className="city-search-context">{ctx}</span>}
+                    </span>
+                    <span className="city-search-ghi">~20 s</span>
+                  </button>
+                );
+              })}
             </>
           )}
 
           {searchErr && (
-            <div className="city-search-item" style={{ color: '#e05252', cursor: 'default' }}>
-              <span className="city-search-flag">⚠</span>
-              <span className="city-search-label" style={{ fontSize: 11 }}>{searchErr}</span>
+            <div className="city-search-err">
+              <span>⚠</span>
+              <span>{searchErr}</span>
             </div>
           )}
 
