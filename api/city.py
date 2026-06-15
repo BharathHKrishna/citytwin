@@ -6,11 +6,13 @@ Runs without local rasters (uses PVGIS for GHI) and without osmnx/geopandas
 for typical city-centre bounding boxes (1.5 km radius).
 """
 from http.server import BaseHTTPRequestHandler
-from urllib.parse import parse_qs, urlparse
-import json, math, re, hashlib, os
+from urllib.parse import parse_qs, urlparse, quote
+import json, math, re, os
 
 # ── tiny vendored deps (pure-Python, no heavy libs) ───────────────────────────
 import requests
+
+_UA = "CityTwin/1.0 (github.com/BharathHKrishna/citytwin)"
 
 _PANEL_EFF  = 0.20
 _PERF_RATIO = 0.80
@@ -28,7 +30,7 @@ def _geocode(query: str) -> dict:
     r = requests.get(
         "https://nominatim.openstreetmap.org/search",
         params={"q": query, "format": "json", "limit": 1, "addressdetails": 1},
-        headers={"User-Agent": "CityTwin/1.0 (github.com/BharathHKrishna/citytwin)"},
+        headers={"User-Agent": _UA},
         timeout=6,
     )
     results = r.json()
@@ -67,21 +69,29 @@ def _ghi(lat: float, lon: float) -> float:
     return round(max(800, 2200 * math.cos(math.radians(abs(lat) * 0.9))), 0)
 
 
+_OVERPASS_BASES = [
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter",
+]
+
 def _overpass(lat: float, lon: float, radius_km: float) -> list[dict]:
     d = radius_km / 111.0
     d_lon = radius_km / (111.0 * math.cos(math.radians(lat)))
     bbox = f"{lat-d:.5f},{lon-d_lon:.5f},{lat+d:.5f},{lon+d_lon:.5f}"
-    query = (
-        f'[out:json][timeout:20];'
-        f'(way["building"]({bbox}););'
-        f'out geom;'
-    )
-    r = requests.post(
-        "https://overpass-api.de/api/interpreter",
-        data={"data": query},
-        timeout=22,
-    )
-    return r.json().get("elements", [])
+    query = f'[out:json][timeout:22];(way["building"]({bbox}););out geom;'
+
+    last_err: Exception = RuntimeError("No Overpass endpoint available")
+    for base in _OVERPASS_BASES:
+        try:
+            # Use GET with URL-encoded query — avoids 406 that POST sometimes triggers
+            url = f"{base}?data={quote(query)}"
+            r = requests.get(url, timeout=25, headers={"User-Agent": _UA})
+            r.raise_for_status()
+            return r.json().get("elements", [])
+        except Exception as e:
+            last_err = e
+            continue
+    raise last_err
 
 
 def _area(nodes: list[dict]) -> float:

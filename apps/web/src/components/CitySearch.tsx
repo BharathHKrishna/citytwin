@@ -194,7 +194,7 @@ export default function CitySearch({ cities, activeCity, onSelect, onSearch, onC
             setSearchErr(null);
             onClearError();   // clear any toolbar error when user types
           }}
-          onFocus={() => setOpen(true)}
+          onFocus={() => { setOpen(true); setSearchErr(null); }}
           onBlur={() => setTimeout(() => setOpen(false), 200)}
           onKeyDown={handleKeyDown}
           disabled={busy}
