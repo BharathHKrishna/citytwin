@@ -449,20 +449,22 @@ body {
 /* ── History strip ────────────────────────────────── */
 .history-strip {
   position: absolute;
-  top: 72px;
-  left: 16px;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
   z-index: 10;
   display: flex;
   align-items: center;
   gap: 8px;
   background: var(--bg-panel);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 6px 12px;
+  border-radius: 24px;
+  padding: 6px 14px;
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
-  max-width: calc(100vw - 220px);
+  max-width: calc(100vw - 440px);
   overflow-x: auto;
+  white-space: nowrap;
 }
 
 .history-label {

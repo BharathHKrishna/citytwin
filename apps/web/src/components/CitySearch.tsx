@@ -23,12 +23,12 @@ export interface SearchTarget {
 
 interface NominatimHit {
   place_id:     number;
-  name:         string;          // OSM name tag — the canonical place name
   display_name: string;
   lat:          string;
   lon:          string;
   class:        string;
   type:         string;
+  importance:   number;   // 0–1, higher = more prominent (Hamburg ~0.85, tiny village ~0.1)
   address: {
     city?:         string;
     town?:         string;
@@ -42,11 +42,9 @@ interface NominatimHit {
 }
 
 function hitPrimaryName(h: NominatimHit): string {
-  // h.name is the raw OSM name — most reliable for matching.
-  // Fall back to address fields, then first word of display_name.
-  if (h.name) return h.name;
-  const a = h.address;
-  return a.city ?? a.town ?? a.municipality ?? a.village ?? h.display_name.split(',')[0].trim();
+  // display_name first component is the place's own name, not the parent admin area.
+  // e.g. "Hamburg, Germany" → "Hamburg", "Hambu-ri, Chagang, North Korea" → "Hambu-ri"
+  return h.display_name.split(',')[0].trim();
 }
 
 function hitContext(h: NominatimHit): string {
@@ -103,16 +101,20 @@ export default function CitySearch({ cities, activeCity, onSelect, onSearch, loa
         );
         const data: NominatimHit[] = await r.json();
 
-        const hits = data.filter(h => {
-          // Only settlements and admin boundaries — skip roads, POIs, etc.
-          if (h.class !== 'place' && !(h.class === 'boundary' && h.type === 'administrative')) {
-            return false;
-          }
-          // OSM name must actually contain the typed string.
-          // This is the key fix: uses h.name (raw OSM tag), not display_name.
-          const name = hitPrimaryName(h).toLowerCase();
-          return name.includes(lower);
-        });
+        const hits = data
+          .filter(h => {
+            // Only settlements and admin boundaries — skip roads, POIs, etc.
+            if (h.class !== 'place' && !(h.class === 'boundary' && h.type === 'administrative')) {
+              return false;
+            }
+            // The place's own name must contain the typed string.
+            const name = hitPrimaryName(h).toLowerCase();
+            return name.includes(lower);
+          })
+          // Sort by Nominatim importance score (0-1).
+          // This puts Hamburg (0.85) above "Hambu-ri, North Korea" (0.10)
+          // even when Nominatim's raw ranking prefers the shorter prefix match.
+          .sort((a, b) => (b.importance ?? 0) - (a.importance ?? 0));
 
         setSuggestions(hits.slice(0, 6));
       } catch {

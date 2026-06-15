@@ -1,6 +1,12 @@
 {
   "buildCommand": "cd apps/web && npm install && npm run build",
   "outputDirectory": "apps/web/dist",
-  "installCommand": "echo skip",
-  "framework": null
+  "installCommand": "pip install requests -q",
+  "framework": null,
+  "functions": {
+    "api/city.py": {
+      "runtime": "python3.12",
+      "maxDuration": 30
+    }
+  }
 }
