@@ -13,7 +13,7 @@
     {
       "key": "amsterdam",
       "label": "Amsterdam",
-      "country": "",
+      "country": "NL",
       "lat": 52.3702,
       "lon": 4.8952,
       "bearing": 15,
@@ -23,7 +23,7 @@
     {
       "key": "bangalore",
       "label": "Bangalore",
-      "country": "",
+      "country": "IN",
       "lat": 12.9716,
       "lon": 77.5946,
       "bearing": -20,
@@ -33,7 +33,7 @@
     {
       "key": "berlin",
       "label": "Berlin",
-      "country": "",
+      "country": "DE",
       "lat": 52.52,
       "lon": 13.405,
       "bearing": 10,
@@ -43,7 +43,7 @@
     {
       "key": "karlsruhe",
       "label": "Karlsruhe",
-      "country": "",
+      "country": "DE",
       "lat": 49.0093,
       "lon": 8.4044,
       "bearing": -15,
@@ -63,7 +63,7 @@
     {
       "key": "munich",
       "label": "Munich",
-      "country": "",
+      "country": "DE",
       "lat": 48.1351,
       "lon": 11.582,
       "bearing": -5,
@@ -81,5 +81,5 @@
       "feature_count": 435
     }
   ],
-  "updated": "2026-06-14"
+  "updated": "2026-06-15"
 }

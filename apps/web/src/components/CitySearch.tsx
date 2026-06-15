@@ -21,20 +21,40 @@ export interface SearchTarget {
   lon:     number;
 }
 
-// Photon (komoot) feature — purpose-built geocoder autocomplete on OSM data.
-// Handles prefix matching properly: "hambur" → Hamburg, "stutt" → Stuttgart.
-interface PhotonFeature {
-  type: 'Feature';
-  geometry: { type: 'Point'; coordinates: [number, number] }; // [lon, lat]
-  properties: {
-    osm_id:      number;
-    name:        string;
-    country:     string;
-    countrycode: string;
-    type:        string; // 'city', 'town', 'village', 'county', 'district'
-    state?:      string;
-    county?:     string;
+interface NominatimHit {
+  place_id:     number;
+  name:         string;          // OSM name tag — the canonical place name
+  display_name: string;
+  lat:          string;
+  lon:          string;
+  class:        string;
+  type:         string;
+  address: {
+    city?:         string;
+    town?:         string;
+    village?:      string;
+    municipality?: string;
+    county?:       string;
+    state?:        string;
+    country?:      string;
+    country_code?: string;
   };
+}
+
+function hitPrimaryName(h: NominatimHit): string {
+  // h.name is the raw OSM name — most reliable for matching.
+  // Fall back to address fields, then first word of display_name.
+  if (h.name) return h.name;
+  const a = h.address;
+  return a.city ?? a.town ?? a.municipality ?? a.village ?? h.display_name.split(',')[0].trim();
+}
+
+function hitContext(h: NominatimHit): string {
+  return [h.address.state, h.address.country].filter(Boolean).join(', ');
+}
+
+function hitFlag(h: NominatimHit): string {
+  return FLAG[(h.address.country_code ?? '').toUpperCase()] ?? '🌍';
 }
 
 interface Props {
@@ -48,7 +68,7 @@ interface Props {
 export default function CitySearch({ cities, activeCity, onSelect, onSearch, loading }: Props) {
   const [query,       setQuery]       = useState('');
   const [open,        setOpen]        = useState(false);
-  const [suggestions, setSuggestions] = useState<PhotonFeature[]>([]);
+  const [suggestions, setSuggestions] = useState<NominatimHit[]>([]);
   const [nomLoading,  setNomLoading]  = useState(false);
   const [searching,   setSearching]   = useState(false);
   const [searchErr,   setSearchErr]   = useState<string | null>(null);
@@ -65,29 +85,44 @@ export default function CitySearch({ cities, activeCity, onSelect, onSearch, loa
         c.key.toLowerCase().includes(lower),
       );
 
-  // Photon autocomplete — debounced 380ms.
-  // Uses layer=city,district,county for settlement-level results only.
-  // Photon does proper prefix matching so "hambur" → Hamburg, "stutt" → Stuttgart.
+  // Nominatim autocomplete, debounced 400ms.
+  // Key filter: h.name (OSM canonical name) must start with or contain the query.
+  // This blocks false positives: "Mora" appearing for "stutt" happens because
+  // Mora has a "Stuttgarterstraße", but Mora's OSM name is "Mora" ≠ "stutt".
+  // Hamburg, Stuttgart, Kolkata etc. all pass because their OSM names match.
   useEffect(() => {
     if (trimmed.length < 2) { setSuggestions([]); return; }
     clearTimeout(debounce.current);
     debounce.current = setTimeout(async () => {
       setNomLoading(true);
       try {
-        const url =
-          `https://photon.komoot.io/api/?q=${encodeURIComponent(trimmed)}` +
-          `&limit=7&layer=city,district,county`;
-        const r = await fetch(url, { headers: { 'Accept-Language': 'en' } });
-        const data = await r.json() as { features: PhotonFeature[] };
-        setSuggestions(data.features ?? []);
+        const r = await fetch(
+          `https://nominatim.openstreetmap.org/search` +
+          `?q=${encodeURIComponent(trimmed)}&format=json&limit=15&addressdetails=1`,
+          { headers: { 'Accept-Language': 'en' } },
+        );
+        const data: NominatimHit[] = await r.json();
+
+        const hits = data.filter(h => {
+          // Only settlements and admin boundaries — skip roads, POIs, etc.
+          if (h.class !== 'place' && !(h.class === 'boundary' && h.type === 'administrative')) {
+            return false;
+          }
+          // OSM name must actually contain the typed string.
+          // This is the key fix: uses h.name (raw OSM tag), not display_name.
+          const name = hitPrimaryName(h).toLowerCase();
+          return name.includes(lower);
+        });
+
+        setSuggestions(hits.slice(0, 6));
       } catch {
         setSuggestions([]);
       } finally {
         setNomLoading(false);
       }
-    }, 380);
+    }, 400);
     return () => clearTimeout(debounce.current);
-  }, [trimmed]);
+  }, [trimmed, lower]);
 
   function selectKnown(city: CityConfig) {
     onSelect(city);
@@ -98,13 +133,12 @@ export default function CitySearch({ cities, activeCity, onSelect, onSearch, loa
     inputRef.current?.blur();
   }
 
-  async function selectSuggestion(f: PhotonFeature) {
-    const [lon, lat] = f.geometry.coordinates;
+  async function selectSuggestion(hit: NominatimHit) {
     const target: SearchTarget = {
-      label:   f.properties.name,
-      country: (f.properties.countrycode ?? '').toUpperCase(),
-      lat,
-      lon,
+      label:   hitPrimaryName(hit),
+      country: (hit.address.country_code ?? '').toUpperCase(),
+      lat:     parseFloat(hit.lat),
+      lon:     parseFloat(hit.lon),
     };
     setQuery('');
     setOpen(false);
@@ -116,10 +150,9 @@ export default function CitySearch({ cities, activeCity, onSelect, onSearch, loa
       await onSearch(target);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      // Distinguish "no local API" from other errors
       setSearchErr(
         msg.includes('Failed to fetch') || msg.includes('404')
-          ? `Live search needs the local API server — run: cd apps/api && uvicorn server:app --port 8000`
+          ? 'Live fetch needs the local API — run: cd apps/api && uvicorn server:app --port 8000'
           : msg,
       );
     } finally {
@@ -151,7 +184,7 @@ export default function CitySearch({ cities, activeCity, onSelect, onSearch, loa
           placeholder={activeCity ? activeCity.label : 'Search any city…'}
           value={query}
           onChange={e => { setQuery(e.target.value); setOpen(true); setSearchErr(null); }}
-          onFocus={() => { if (trimmed.length >= 2) setOpen(true); }}
+          onFocus={() => setOpen(true)}
           onBlur={() => setTimeout(() => setOpen(false), 200)}
           onKeyDown={handleKeyDown}
           disabled={busy}
@@ -164,7 +197,6 @@ export default function CitySearch({ cities, activeCity, onSelect, onSearch, loa
       {open && hasAny && (
         <div className="city-search-dropdown">
 
-          {/* Already-fetched cities that match the query */}
           {knownMatches.length > 0 && (
             <>
               <div className="city-search-section">Already fetched</div>
@@ -174,7 +206,7 @@ export default function CitySearch({ cities, activeCity, onSelect, onSearch, loa
                   className={`city-search-item${city.key === activeCity?.key ? ' city-search-item--active' : ''}`}
                   onMouseDown={() => selectKnown(city)}
                 >
-                  <span className="city-search-flag">{FLAG[city.country] ?? '🌍'}</span>
+                  <span className="city-search-flag">{FLAG[city.country?.toUpperCase()] ?? '🌍'}</span>
                   <span className="city-search-label">{city.label}</span>
                   {city.ghi_annual > 0 && (
                     <span className="city-search-ghi">☀ {city.ghi_annual.toLocaleString()} kWh/m²/yr</span>
@@ -184,30 +216,25 @@ export default function CitySearch({ cities, activeCity, onSelect, onSearch, loa
             </>
           )}
 
-          {/* Photon live suggestions */}
           {showNom && (
             <>
               <div className="city-search-section">
                 {knownMatches.length > 0 ? 'Or fetch a new city' : 'Select the right one'}
               </div>
-              {suggestions.map(f => {
-                const cc = (f.properties.countrycode ?? '').toUpperCase();
-                const ctx = [f.properties.state, f.properties.country].filter(Boolean).join(', ');
-                return (
-                  <button
-                    key={f.properties.osm_id}
-                    className="city-search-item city-search-item--nom"
-                    onMouseDown={() => selectSuggestion(f)}
-                  >
-                    <span className="city-search-flag">{FLAG[cc] ?? '🌍'}</span>
-                    <span className="city-search-label-wrap">
-                      <span className="city-search-label">{f.properties.name}</span>
-                      {ctx && <span className="city-search-context">{ctx}</span>}
-                    </span>
-                    <span className="city-search-ghi">~20 s</span>
-                  </button>
-                );
-              })}
+              {suggestions.map(hit => (
+                <button
+                  key={hit.place_id}
+                  className="city-search-item city-search-item--nom"
+                  onMouseDown={() => selectSuggestion(hit)}
+                >
+                  <span className="city-search-flag">{hitFlag(hit)}</span>
+                  <span className="city-search-label-wrap">
+                    <span className="city-search-label">{hitPrimaryName(hit)}</span>
+                    <span className="city-search-context">{hitContext(hit)}</span>
+                  </span>
+                  <span className="city-search-ghi">~20 s</span>
+                </button>
+              ))}
             </>
           )}
 

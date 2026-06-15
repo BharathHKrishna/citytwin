@@ -51,7 +51,7 @@ export default function HistoryStrip({ activeCity, onSelect }: Props) {
             onClick={() => onSelect(city)}
             title={`${city.label} — ☀ ${city.ghi_annual} kWh/m²/yr`}
           >
-            <span className="history-chip-flag">{FLAG[city.country] ?? '🌍'}</span>
+            <span className="history-chip-flag">{FLAG[city.country?.toUpperCase() ?? ''] ?? '🌍'}</span>
             {city.label}
           </button>
         ))}
